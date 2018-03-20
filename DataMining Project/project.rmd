@@ -1,0 +1,284 @@
+---
+title: "Project"
+author: "Kiyoon Jeong"
+date: "November 17, 2017"
+output: html_document
+---
+
+```{r}
+
+library(plyr)
+
+setwd("C:/Users/Kiyoon Jeong/Desktop/DataMining Project")
+data1 = read.csv("UCI_Credit_Card.csv")
+
+# preprocess
+## change education = 6 to 5 since they both represent unknown.
+data1 = read.csv('UCI_Credit_Card.csv')[,-1]
+for (i in range(length(data1$EDUCATION))){
+  if (data1$EDUCATION[i] == 6){
+    data1$EDUCATION[i] = 5
+  }
+}
+```
+
+## change some variables to factor 
+```{r}
+
+data1$SEX = as.factor(data1$SEX)
+data1$EDUCATION = as.factor(data1$EDUCATION)
+data1$PAY_0 = as.factor(data1$PAY_0)
+data1$PAY_2 = as.factor(data1$PAY_2)
+data1$PAY_3 = as.factor(data1$PAY_3)
+data1$PAY_4 = as.factor(data1$PAY_4)
+data1$PAY_5 = as.factor(data1$PAY_5)
+data1$PAY_6 = as.factor(data1$PAY_6)
+data1$default.payment.next.month = as.factor(data1$default.payment.next.month)
+data1$LIMIT_BAL = as.numeric(data1$LIMIT_BAL)
+
+data1 = rename(data1, c('default.payment.next.month' = 'dpnm'))
+```
+
+library(leaps)
+library(glmnet)
+
+
+
+data1 = read.csv("feature_selection.csv")
+
+set.seed(1)
+train=sample(1:nrow(data1), nrow(data1) * 0.7)
+test=(-train)
+trainset = data1[train, ]
+testset = data1[test, ]
+
+cv.lasso = cv.glmnet(data.matrix(testset[,-22]),testset$dpnm , family = "binomial", alpha = 1)
+
+best = cv.lasso$lambda.min
+
+plot(cv.lasso$cvm)
+
+best.lasso = glmnet(data.matrix(testset[,-22]),testset[,22], family = "binomial", alpha = 1, lambda = best)
+
+coef(best.lasso)
+
+
+
+## split the data(70% train, 30%validation)
+```{r}
+set.seed(1)
+train=sample(1:nrow(data1), nrow(data1) * 0.7)
+test=(-train)
+trainset = data1[train, ]
+testset = data1[test, ]
+```
+
+```{r}
+
+## 1. Logisitc Regression
+library(MASS)
+folds = cut(seq(1,nrow(trainset)),breaks=5,labels=FALSE)
+new_feature_train = rep('NA',nrow(trainset)/5)
+new_feature_test = rep(0,nrow(testset))
+
+for (i in 1:5){
+  valid = which(folds == i, arr.ind = TRUE)
+  trainset_train = trainset[-valid,]
+  trainset_test = trainset[valid,]
+  glm = glm(dpnm ~., data = trainset_train,family=binomial)
+  glm$xlevels$PAY_2=union(glm$xlevels$PAY_2,trainset_test$PAY_2)
+  glm$xlevels$PAY_5=union(glm$xlevels$PAY_5,trainset_test$PAY_5)
+  glm.train.prob = predict(glm,type='response',newdata=trainset_test)
+  glm.train.pred = rep(0,nrow(trainset_test))
+  glm.train.pred [glm.train.prob>0.5] = 1
+  new_feature_train = cbind(new_feature_train,glm.train.pred)
+  glm.test.prob = predict(glm,type='response',newdata=testset)
+  glm.test.pred = rep(0,nrow(testset))
+  glm.test.pred [glm.test.prob>0.5] = 1
+  new_feature_test = cbind(new_feature_test,glm.test.pred)
+}
+colnames(new_feature_train) =  c('omit','t5','t1','t2','t3','t4')
+new_feature_train = new_feature_train[,c('omit','t1','t2','t3','t4','t5')]
+new_feature_train_lg = matrix(new_feature_train[,-1],ncol=1)
+new_feature_test = new_feature_test[,-1]
+new_feature_test_lg = matrix( rowMeans(new_feature_test), ncol = 1)
+
+```
+
+```{r}
+## 2. SVM
+trainset = read.csv('train.csv')
+testset = read.csv('test.csv')
+
+trainset$dpnm = as.factor(trainset$dpnm)
+testset$dpnm = as.factor(testset$dpnm)
+
+library(MASS)
+library(e1071)
+folds = cut(seq(1,nrow(trainset)),breaks=5,labels=FALSE)
+new_svm_train = matrix(0,nrow = nrow(trainset)/5, ncol = 5)
+new_svm_test = matrix(0,nrow = nrow(testset), ncol = 5)
+prob = matrix(0, nrow = nrow(testset), ncol = 5)
+
+ptm <- proc.time()
+for (i in 1:5){
+  valid = which(folds == i, arr.ind = TRUE)
+  trainset.train = trainset[-valid,]
+  trainset.test = trainset[valid,]
+  svmmodel = svm(data.matrix(trainset.train[,-22]), trainset.train$dpnm, scale = TRUE, cost = 5)
+  new_svm_train[,i] = as.numeric(predict(svmmodel, newdata=data.matrix(trainset.test[,-22])))-1
+  new_svm_test[,i] = as.numeric(predict(svmmodel, newdata = data.matrix(testset[,-22])))-1
+  
+  #new_svm_train[,i] = as.numeric(predict(svmmodel, newdata=data.matrix(trainset.test[,-22]), probability = TRUE))-1
+  #new_svm_test[,i] = predict(svmmodel, newdata = data.matrix(testset[,-22]),probability=TRUE)
+  #prob[,i] = attr(predict(svmmodel, newdata = data.matrix(testset[,-22]),probability=TRUE),"probabilities")[,1]
+}
+
+
+matrix( rowMeans(new_svm_test), ncol = 1)
+proc.time() - ptm  
+colnames(new_svm_train) =  c('t5','t1','t2','t3','t4')
+new_svm_train = new_svm_train[,c('t1','t2','t3','t4','t5')]
+new_svm_train_lg = matrix(new_svm_train, ncol=1)
+new_svm_test_lg = ifelse(matrix( rowMeans(new_svm_test), ncol = 1)>0.5,1,0)
+
+SVM_RICKY = matrix( rowMeans(new_svm_test), ncol = 1)
+
+
+svmmodel = svm(dpnm ~., data = trainset, type = "C-classification", kernel = "linear", scale = TRUE, cost = 5)
+df = data.matrix(trainset[,-22])
+plot(svmmodel, trainset , dpnm ~ SEX)
+plot(svm1, df, mpg ~ cylinders)
+
+
+#test
+
+new_svm_test_lg1 = ifelse(matrix( rowMeans(new_svm_test), ncol = 1)>0.5,1,0)
+new_svm_test_lg2 = ifelse(matrix( rowMeans(new_svm_test), ncol = 1)>0.3,1,0)
+new_svm_test_lg3 = ifelse(matrix( rowMeans(new_svm_test), ncol = 1)>0.1,1,0)
+
+table(testset$dpnm , new_svm_test_lg1)
+table(testset$dpnm , new_svm_test_lg2)
+table(testset$dpnm , new_svm_test_lg3)
+
+write.csv(prob, file = "SVM_prob.csv")
+
+write.csv(new_svm_train_lg, file = "svmtrain.csv")
+write.csv(new_svm_test_lg, file = "svmtest.csv")
+
+mean(testset$dpnm != new_svm_test_lg)
+mean(testset$dpnm != new_svm_test_lg1)
+mean(testset$dpnm != new_svm_test_lg2)
+mean(testset$dpnm != new_svm_test_lg3)
+
+
+784/(784+1221)
+0.3910224
+```
+
+
+svmmodel = svm(data.matrix(trainset[,-22]), trainset$dpnm, scale = TRUE, cost = 5, probability = TRUE)
+svmmodel.predict = predict(svmmodel, newdata = data.matrix(testset[,-22]), probability=TRUE)
+svmmodel.probs<-attr(svmmodel.predict,"probabilities")
+svmmodel.class<-predict(svmmodel,testset[,-22],type="class")
+svmmodel.labels<-testset$dpnm
+#analyzing result
+
+svmmodel.confusion<-confusion.matrix(svmmodel.labels,svmmodel.class)
+svmmodel.accuracy<-prop.correct(svmmodel.confusion)
+
+#roc analysis for test data
+svmmodel.prediction<-prediction(svmmodel.probs,svmmodel.labels)
+svmmodel.performance<-performance(svmmodel.prediction,"tpr","fpr")
+svmmodel.auc<-performance(svmmodel.prediction,"auc")@y.values[[1]]
+
+
+<-predict(svmmodel,subset(test,select=-y),decision.values=TRUE)
+svmmodel.probs<-attr(svmmodel.predict,"decision.values")
+svmmodel.class<-predict(svmmodel,test,type="class")
+svmmodel.labels<-test$y
+#analyzing result
+svmmodel.confusion<-confusion.matrix(svmmodel.labels,svmmodel.class)
+svmmodel.accuracy<-prop.correct(svmmodel.confusion)
+
+#roc analysis for test data
+svmmodel.prediction<-prediction(svmmodel.probs,svmmodel.labels)
+svmmodel.performance<-performance(svmmodel.prediction,"tpr","fpr")
+svmmodel.auc<-performance(svmmodel.prediction,"auc")@y.values[[1]]
+
+
+
+```{r}
+#################### Random Forest
+
+trainset = read.csv('train.csv')
+testset = read.csv('test.csv')
+
+trainset$dpnm = as.factor(trainset$dpnm)
+testset$dpnm = as.factor(testset$dpnm)
+
+library(MASS)
+library(randomForest)
+set.seed(123)
+folds = cut(seq(1,nrow(trainset)),breaks=5,labels=FALSE)
+new_rf_train = matrix(0,nrow = nrow(trainset)/5, ncol = 5)
+new_rf_test = matrix(0,nrow = nrow(testset), ncol = 5)
+
+
+
+rfmodel <- randomForest(dpnm ~. , data = trainset, ntree = 300, mtry = 6, importance = TRUE, cutoff = c(0.6,0.4))
+new_rf = predict(rfmodel, testset[,-22], type ="prob")
+table(testset$dpnm, new_rf)
+mean(testset$dpnm != new_rf)
+
+
+ptm <- proc.time()
+for (i in 1:5){
+  valid = which(folds == i, arr.ind = TRUE)
+  trainset.train = trainset[-valid,]
+  trainset.test = trainset[valid,]
+  rfmodel <- randomForest(dpnm ~. , data = trainset.train, ntree = 300, mtry = 6, importance = TRUE, cutoff = c(0.6,0.4))
+  new_rf_train[,i] = as.numeric(predict(rfmodel, trainset.test[,-22]))-1
+  new_rf_test[,i] = as.numeric(predict(rfmodel, testset[,-22]))-1
+  #new_rf_test[,i] = predict(rfmodel, testset[,-22], type = "prob")[,2]
+}
+proc.time() - ptm
+
+new_rf_test
+
+rfdat = matrix( rowMeans(new_rf_test), ncol = 1)
+
+write.csv(rfdat, file = "rf_prb.csv", row.names = FALSE)
+
+colnames(new_rf_train) =  c('t5','t1','t2','t3','t4')
+new_rf_train = new_rf_train[,c('t1','t2','t3','t4','t5')]
+new_rf_train_lg = matrix(new_rf_train, ncol=1)
+new_rf_test_lg = ifelse(matrix( rowMeans(new_rf_test), ncol = 1)>0.5,1,0)
+new_rf_test_lg1 = ifelse(matrix( rowMeans(new_rf_test), ncol = 1)>0.1,1,0)
+
+table(testset$dpnm, new_rf_test_lg)
+table(testset$dpnm, new_rf_test_lg1)
+
+mean(testset$dpnm != new_rf_test_lg)
+mean(testset$dpnm != new_rf_test_lg1)
+
+933/(1072+933)
+1050/(955+1050)
+
+888/2005
+
+write.csv(new_rf_train_lg, file = "rftrain.csv")
+write.csv(new_rf_test_lg, file = "rftest.csv")
+
+mean(testset$dpnm != new_rf_test_lg)
+
+plot(rfmodel)
+
+# variable importance
+
+varImpPlot(rfmodel)
+
+```
+
+
+
